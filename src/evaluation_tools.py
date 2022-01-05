@@ -21,7 +21,7 @@ from config import RetrievalModelConfig, EmbeddingModelConfig
 from setting import *
 
 from src.data_tools import decode_answer
-from src.retrieval_model import GensimRetrieveModel
+from src.retrieval_model import GensimRetrievalModel
 from src.embedding_model import GensimEmbeddingModel
 from src.utils import load_args, timer
 
@@ -37,7 +37,7 @@ def evaluate_gensim_model_in_filling_subject(gensim_retrieval_model_names=None,
 		gensim_embedding_model_names = list(GENSIM_EMBEDDING_MODEL_SUMMARY.keys())
 	evaluation_summary = {model_name: {f'hit@{hit}': 0 for hit in hits} for model_name in gensim_retrieval_model_names + gensim_embedding_model_names}
 	dictionary = Dictionary.load(REFERENCE_DICTIONARY_PATH)
-	grm = GensimRetrieveModel(args=load_args(Config=RetrievalModelConfig))
+	grm = GensimRetrievalModel(args=load_args(Config=RetrievalModelConfig))
 	gem = GensimEmbeddingModel(args=load_args(Config=EmbeddingModelConfig))
 		
 	# 加载训练集中有subject标签的部分
@@ -47,7 +47,7 @@ def evaluate_gensim_model_in_filling_subject(gensim_retrieval_model_names=None,
 	# 构建相似度
 	grm_similaritys = {model_name: grm.build_similarity(model_name=model_name) for model_name in gensim_retrieval_model_names}
 	gem_similaritys = {model_name: gem.build_similarity(model_name=model_name) for model_name in gensim_embedding_model_names}
-	grm_sequences = {model_name: GensimRetrieveModel.load_sequence(model_name=model_name) for model_name in gensim_retrieval_model_names}
+	grm_sequences = {model_name: GensimRetrievalModel.load_sequence(model_name=model_name) for model_name in gensim_retrieval_model_names}
 	
 	# 加载参考书目文档
 	reference_dataframe = pandas.read_csv(REFERENCE_PATH, sep='\t', header=0)

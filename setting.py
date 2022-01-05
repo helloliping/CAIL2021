@@ -7,10 +7,14 @@ import os
 import torch
 import platform
 
-# Linux系统使用相对路径读取文件时需要添加前缀
+
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 PLATFORM = platform.system()
-DIR_SUFFIX = '' if PLATFORM == 'Windows' else '/'
+
+# Linux系统使用相对路径读取文件时需要添加前缀
+# DIR_SUFFIX = '' if PLATFORM == 'Windows' else '/'
+
+# 2021/12/27 13:32:39 似乎Linux系统中也不完全都需要在相对路径前添加斜杠
 DIR_SUFFIX = ''
 
 # data文件夹及其结构设定
@@ -82,7 +86,7 @@ GENSIM_RETRIEVAL_MODEL_SUMMARY = {
 		'corpus'		: REFERENCE_CORPUS_TFIDF_PATH,
 		'model'			: REFERENCE_TFIDF_MODEL_PATH,
 		'dictionary'	: REFERENCE_DICTIONARY_PATH,
-		'build_function': 'GensimRetrieveModel.build_tfidf_model',
+		'build_function': 'GensimRetrievalModel.build_tfidf_model',
 		'class'			: 'gensim.models.TfidfModel',
 		'sequence'		: ['tfidf'],					
 	},
@@ -90,7 +94,7 @@ GENSIM_RETRIEVAL_MODEL_SUMMARY = {
 		'corpus'		: REFERENCE_CORPUS_LSI_PATH,
 		'model'			: REFERENCE_LSI_MODEL_PATH,
 		'dictionary'	: REFERENCE_DICTIONARY_PATH,
-		'build_function': 'GensimRetrieveModel.build_lsi_model',		
+		'build_function': 'GensimRetrievalModel.build_lsi_model',		
 		'class'			: 'gensim.models.LsiModel',
 		'sequence'		: ['tfidf', 'lsi'],
 	},
@@ -98,7 +102,7 @@ GENSIM_RETRIEVAL_MODEL_SUMMARY = {
 		'corpus'		: REFERENCE_CORPUS_LDA_PATH,
 		'model'			: REFERENCE_LDA_MODEL_PATH,
 		'dictionary'	: REFERENCE_DICTIONARY_PATH,
-		'build_function': 'GensimRetrieveModel.build_lda_model',
+		'build_function': 'GensimRetrievalModel.build_lda_model',
 		'class'			: 'gensim.models.LdaModel',
 		'sequence'		: ['tfidf', 'lda'],
 	},
@@ -108,7 +112,7 @@ GENSIM_RETRIEVAL_MODEL_SUMMARY = {
 		'corpus'		: REFERENCE_CORPUS_HDP_PATH,
 		'model'			: REFERENCE_HDP_MODEL_PATH,
 		'dictionary'	: REFERENCE_DICTIONARY_PATH,
-		'build_function': 'GensimRetrieveModel.build_hdp_model',
+		'build_function': 'GensimRetrievalModel.build_hdp_model',
 		'class'			: 'gensim.models.HdpModel',
 		'sequence'		: ['hdp'],
 	},	
@@ -118,20 +122,22 @@ GENSIM_RETRIEVAL_MODEL_SUMMARY = {
 		'corpus'		: REFERENCE_CORPUS_LOGENTROPY_PATH,
 		'model'			: REFERENCE_LOGENTROPY_MODEL_PATH,
 		'dictionary'	: None,											# 不知为何gensim.models.LogEntropyModel的构造参数里竟然没有id2word
-		'build_function': 'GensimRetrieveModel.build_logentropy_model',
+		'build_function': 'GensimRetrievalModel.build_logentropy_model',
 		'class'			: 'gensim.models.LogEntropyModel',
 		'sequence'		: ['logentropy'],
 	},
 }
 
-
-EMBEDDING_MODEL_DIR = os.path.join(MODEL_DIR, 'embedding_model')
+EMBEDDING_MODEL_DIR = os.path.join(MODEL_DIR, 'embedding_model')		
 GENSIM_EMBEDDING_MODEL_DIR = os.path.join(EMBEDDING_MODEL_DIR, 'gensim')
 
-REFERENCE_WORD2VEC_MODEL_PATH = os.path.join(GENSIM_EMBEDDING_MODEL_DIR, 'reference_word2vec.m')
-REFERENCE_FASTTEXT_MODEL_PATH = os.path.join(GENSIM_EMBEDDING_MODEL_DIR, 'reference_fasttext.m')
-REFERENCE_DOC2VEC_MODEL_PATH = os.path.join(GENSIM_EMBEDDING_MODEL_DIR, 'reference_doc2vec.m')
+REFERENCE_WORD2VEC_MODEL_PATH = os.path.join(GENSIM_EMBEDDING_MODEL_DIR, 'reference_word2vec.m')	# 参考书目文档训练得到的word2vec模型
+REFERENCE_FASTTEXT_MODEL_PATH = os.path.join(GENSIM_EMBEDDING_MODEL_DIR, 'reference_fasttext.m')	# 参考书目文档训练得到的fasttext模型
+REFERENCE_DOC2VEC_MODEL_PATH = os.path.join(GENSIM_EMBEDDING_MODEL_DIR, 'reference_doc2vec.m')		# 参考书目文档训练得到的doc2vec模型: 该模型不用于测试检索
 
+# 类似注册表的字典, 便于相关代码简化
+# build_function	: 在src.embedding_model中对应的模型构建方法
+# class				: 在gensim中对应的模型类
 GENSIM_EMBEDDING_MODEL_SUMMARY = {
 	'word2vec': {
 		'model': REFERENCE_WORD2VEC_MODEL_PATH,
@@ -141,7 +147,23 @@ GENSIM_EMBEDDING_MODEL_SUMMARY = {
 		'model': REFERENCE_FASTTEXT_MODEL_PATH,
 		'class': 'gensim.models.FastText',
 	},
+	'doc2vec': {
+		'model': REFERENCE_DOC2VEC_MODEL_PATH,
+		'class': 'gensim.models.Doc2Vec',
+	}
 }
+
+TRANSFORMERS_EMBEDDING_MODEL_DIR = os.path.join(EMBEDDING_MODEL_DIR, 'transformers')	# Transformers库中调用的HuggingFace模型目录
+BERT_MODEL_DIR = os.path.join(TRANSFORMERS_EMBEDDING_MODEL_DIR, 'bert')					# BERT模型目录
+
+BERT_MODEL_SUMMARY = {
+	'bert-base-chinese': {
+		'root': os.path.join(BERT_MODEL_DIR, 'bert-base-chinese'),		
+		'config': os.path.join(BERT_MODEL_DIR, 'bert-base-chinese', 'config.json'),	
+		'vocab': os.path.join(BERT_MODEL_DIR, 'bert-base-chinese', 'vocab.txt'),	
+	}
+}
+
 
 # 其他全局变量
 OPTION2INDEX = {'A': 0, 'B': 1, 'C': 2, 'D': 3}							# 选项对应的索引

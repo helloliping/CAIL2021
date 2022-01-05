@@ -40,7 +40,7 @@ def test_choice_model(mode, model_name, model_path, **kwargs):
 	# 根据kwargs调整问答模型配置的参数
 	for key, value in kwargs.items():
 		args_2.__setattr__(key, value)																																
-	test_dataloader = generate_dataloader(args=args_2, mode=mode, do_export=False, pipeline='choice')
+	test_dataloader = generate_dataloader(args=args_2, mode=mode, do_export=False, pipeline='choice', for_test=False)
 	
 	# 开始测试
 	saved_model.eval()
@@ -79,7 +79,7 @@ def test_judgment_model(mode, model_name, model_path, threshold=.5, **kwargs):
 	# 根据kwargs调整问答模型配置的参数
 	for key, value in kwargs.items():
 		args_2.__setattr__(key, value)																																
-	test_dataloader = generate_dataloader(args=args_2, mode=mode, do_export=False, pipeline='judgment')
+	test_dataloader = generate_dataloader(args=args_2, mode=mode, do_export=False, pipeline='judgment', for_test=False)
 	
 	# 开始测试
 	saved_model.eval()

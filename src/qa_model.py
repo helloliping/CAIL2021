@@ -11,7 +11,6 @@ import torch
 import pandas
 
 from copy import deepcopy
-from torch import nn
 from torch.nn import Module, Embedding, Linear, Sigmoid, CrossEntropyLoss, functional as F
 
 from setting import *

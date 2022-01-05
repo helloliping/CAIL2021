@@ -24,19 +24,22 @@ from sklearn.model_selection import train_test_split
 
 from setting import *
 from config import RetrievalModelConfig, EmbeddingModelConfig
+
 from src.data_tools import load_stopwords, encode_answer, decode_answer, chinese_to_number, filter_stopwords
-from src.retrieval_model import GensimRetrieveModel
+from src.retrieval_model import GensimRetrievalModel
+from src.embedding_model import GensimEmbeddingModel, TransformersEmbeddingModel
 from src.utils import load_args, timer
 
 
 # 生成数据加载器
 # 把这个函数写在Dataset类里作为类方法会报错找不到__collate_id函数, 目前没有找到很好的解决方案
 # 如果放到data_tools.py中的话会导致循环调用, 因此只能先放在这里了
-def generate_dataloader(args, mode='train', do_export=False, pipeline='judgment'):
+def generate_dataloader(args, mode='train', do_export=False, pipeline='judgment', for_test=False):
 	dataset = Dataset(args=args, 
 					  mode=mode, 
 					  do_export=do_export, 
-					  pipeline=pipeline)
+					  pipeline=pipeline,
+					  for_test=for_test)
 	column = dataset.data.columns.tolist()
 	if mode.startswith('train'):
 		batch_size = args.train_batch_size
@@ -53,8 +56,8 @@ def generate_dataloader(args, mode='train', do_export=False, pipeline='judgment'
 		def __collate_id():
 			return [__data['id'] for __data in _batch_data]
 		
-		if args.word_embedding is None:
-			
+		if args.word_embedding is None and args.document_embedding is None:
+			# 不使用词向量或文档向量的情况, 即使用顺序编号编码, 类型是long
 			def __collate_question():
 				return torch.LongTensor([__data['question'] for __data in _batch_data])
 
@@ -68,17 +71,43 @@ def generate_dataloader(args, mode='train', do_export=False, pipeline='judgment'
 				return torch.LongTensor([__data['option'] for __data in _batch_data])
 				
 		else:
+			# 否则即使用向量转化, 此时转化为float类型
 			def __collate_question():
-				return torch.FloatTensor([__data['question'] for __data in _batch_data])
-
+				if isinstance(_batch_data[0]['question'], numpy.ndarray):
+					return torch.FloatTensor([__data['question'] for __data in _batch_data])
+				elif isinstance(_batch_data[0]['question'], torch.Tensor):
+					return torch.stack([__data['question'] for __data in _batch_data])
+				else:
+					print(_batch_data[0]['question'])
+					raise NotImplementedError(type(_batch_data[0]['question']))
+					
 			def __collate_reference():
-				return torch.FloatTensor([__data['reference'] for __data in _batch_data])
+				if isinstance(_batch_data[0]['reference'], numpy.ndarray):
+					return torch.FloatTensor([__data['reference'] for __data in _batch_data])
+				elif isinstance(_batch_data[0]['reference'], torch.Tensor):
+					return torch.stack([__data['reference'] for __data in _batch_data])
+				else:
+					raise NotImplementedError(type(_batch_data[0]['reference']))
 				
 			def __collate_options():
-				return torch.FloatTensor([__data['options'] for __data in _batch_data])
+				if isinstance(_batch_data[0]['options'], numpy.ndarray):
+					return torch.FloatTensor([__data['options'] for __data in _batch_data])
+				elif isinstance(_batch_data[0]['options'], torch.Tensor):
+					return torch.stack([__data['options'] for __data in _batch_data])
+				elif isinstance(_batch_data[0]['options'], list):
+					# 2021/12/27 22:35:27 目前只有options可能存在batch_data的每一个元素是一个列表, 该列表里面是四个选项的嵌入向量
+					# 2021/12/27 22:36:51 原因是options可能会涉及要转为judgment形式, 需要expand, 我担心如果不是list的话可能会失败, 因此只保留了options的list格式, reference之前也是list, 我已经转为numpy.ndarray了
+					return torch.stack([torch.stack(__data['options']) for __data in _batch_data])
+				else:
+					raise NotImplementedError(type(_batch_data[0]['options']))
 				
 			def __collate_option():
-				return torch.FloatTensor([__data['option'] for __data in _batch_data])			
+				if isinstance(_batch_data[0]['option'], numpy.ndarray):
+					return torch.FloatTensor([__data['option'] for __data in _batch_data])		
+				elif isinstance(_batch_data[0]['option'], torch.Tensor):
+					return torch.stack([__data['option'] for __data in _batch_data])
+				else:
+					raise NotImplementedError(type(_batch_data[0]['option']))	
 
 		def __collate_type():
 			return [__data['type'] for __data in _batch_data]
@@ -110,11 +139,13 @@ def generate_dataloader(args, mode='train', do_export=False, pipeline='judgment'
 
 class Dataset(Dataset):
 	"""模型输入数据集管道"""
-	def __init__(self, args, mode='train', do_export=False, pipeline='judgment'):
+	def __init__(self, args, mode='train', do_export=False, pipeline='judgment', for_test=False):
 		"""
 		:param args			: DatasetConfig配置
 		:param mode			: 数据集模式, 详见下面第一行的断言
 		:param do_export	: 是否导出self.data
+		:param pipeline		: 目前考虑judgment与choice两种模式
+		:param for_test		: 2021/12/30 19:21:46 测试模式, 只用少量数据集加快测试效率
 		"""
 		self.pipelines = {
 			'choice': self.choice_pipeline,
@@ -123,20 +154,45 @@ class Dataset(Dataset):
 		
 		assert mode in ['train', 'train_kd', 'train_ca', 'valid', 'valid_kd', 'valid_ca', 'test', 'test_kd', 'test_ca']
 		assert pipeline in self.pipelines
+		assert args.word_embedding is None or args.document_embedding is None	# 2021/12/27 14:03:07 词嵌入和文档嵌入只能使用一个
 		
 		# 构造变量转为成员变量
 		self.args = deepcopy(args)
 		self.mode = mode
 		self.do_export = do_export
 		self.pipeline = pipeline
+		self.for_test = for_test
 		
 		# 根据配置生成对应的成员变量
 		if self.args.filter_stopword:
 			self.stopwords = load_stopwords(stopword_names=None)
+		
 		if self.args.use_reference:
-			self.grm = GensimRetrieveModel(args=load_args(Config=RetrievalModelConfig))		
-		if self.args.word_embedding in GENSIM_RETRIEVAL_MODEL_SUMMARY:
-			self.gem = GensimEmbeddingModel(args=load_args(Config=EmbeddingModelConfig))	
+			# 2021/12/27 21:24:39 使用参考书目文档必须调用检索模型: 目前只有gensim模块下的检索模型
+			_args = load_args(Config=RetrievalModelConfig)
+			# 2021/12/27 21:24:29 重置新参数值, 因为传入Dataset类的args参数中的一些值可能与默认值不同, 以传入值为准
+			for key in vars(_args):
+				if key in self.args:
+					_args.__setattr__(key, self.args.__getattribute__(key))
+			self.grm = GensimRetrievalModel(args=_args)		
+		
+		if self.args.word_embedding in GENSIM_EMBEDDING_MODEL_SUMMARY or self.args.document_embedding in GENSIM_EMBEDDING_MODEL_SUMMARY:
+			# 2021/12/27 21:24:43 使用gensim模块中的词向量模型或文档向量模型给
+			_args = load_args(Config=EmbeddingModelConfig)
+			# 2021/12/27 21:24:24 重置新参数值, 因为传入Dataset类的args参数中的一些值可能与默认值不同, 以传入值为准
+			for key in vars(_args):
+				if key in self.args:
+					_args.__setattr__(key, self.args.__getattribute__(key))
+			self.gem = GensimEmbeddingModel(args=_args)
+		
+		if self.args.word_embedding in BERT_MODEL_SUMMARY or self.args.document_embedding in BERT_MODEL_SUMMARY:
+			# 2021/12/27 21:24:17 使用BERT相关模型
+			_args = load_args(Config=EmbeddingModelConfig)
+			# 2021/12/27 21:24:20 重置新参数值, 因为传入Dataset类的args参数中的一些值可能与默认值不同, 以传入值为准
+			for key in vars(_args):
+				if key in self.args:
+					_args.__setattr__(key, self.args.__getattribute__(key))
+			self.tem = TransformersEmbeddingModel(args=_args)
 		
 		# 生成数据表
 		self.pipelines[pipeline]()
@@ -157,7 +213,7 @@ class Dataset(Dataset):
 		reference	: use_reference配置为True时生效, 包含相关的num_best个参考书目文档段落
 		type		: 零一值表示概念题或情景题
 		label_choice: train或valid模式时生效, 即题目答案
-		"""	
+		"""
 		if self.mode.startswith('train'):
 			filepaths = TRAINSET_PATHs[:]
 		elif self.mode.startswith('valid'):  # 20211101新增验证集处理逻辑
@@ -173,41 +229,85 @@ class Dataset(Dataset):
 		# 数据集字段预处理
 		logging.info('预处理题目题干与选项...')
 		start_time = time.time()
-
+		
+		# token2id字典: 20211212后决定以参考书目文档的token2id为标准, 而非题库的token2id
 		token2id_dataframe = pandas.read_csv(REFERENCE_TOKEN2ID_PATH, sep='\t', header=0)
-		token2id = {token: _id for token, _id in zip(token2id_dataframe['token'], token2id_dataframe['id'])}			# token2id字典: 20211212后决定以参考书目文档的token2id为标准, 而非题库的token2id
-
-		dataset_dataframe = pandas.concat([pandas.read_csv(filepath, sep='\t', header=0) for filepath in filepaths])	# 合并概念题和情景题后的题库
+		token2id = {token: _id for token, _id in zip(token2id_dataframe['token'], token2id_dataframe['id'])}			
+		
+		# 合并概念题和情景题后的题库
+		dataset_dataframe = pandas.concat([pandas.read_csv(filepath, sep='\t', header=0) for filepath in filepaths]).reset_index(drop=True)	
+		
 		if self.mode.endswith('_kd'):   
-			dataset_dataframe = dataset_dataframe[dataset_dataframe['type'] == 0].reset_index(drop=True)		# 筛选概念题
+			dataset_dataframe = dataset_dataframe[dataset_dataframe['type'] == 0].reset_index(drop=True)	# 筛选概念题
 		elif self.mode.endswith('_ca'): 
-			dataset_dataframe = dataset_dataframe[dataset_dataframe['type'] == 1].reset_index(drop=True)		# 筛选情景分析题
+			dataset_dataframe = dataset_dataframe[dataset_dataframe['type'] == 1].reset_index(drop=True)	# 筛选情景分析题
 		else:
-			dataset_dataframe = dataset_dataframe.reset_index(drop=True)										# 无需筛选直接重索引
+			dataset_dataframe = dataset_dataframe.reset_index(drop=True)									# 无需筛选直接重索引
+			
+		# 2021/12/30 19:50:18 决定要做一些特殊的处理
+		if self.for_test:
+			dataset_dataframe = dataset_dataframe.loc[:3, :]
 			
 		dataset_dataframe['id'] = dataset_dataframe['id'].astype(str)				# 字段id转为字符串
 		dataset_dataframe['type'] = dataset_dataframe['type'].astype(int)			# 字段type转为整数
-		dataset_dataframe['statement'] = dataset_dataframe['statement'].map(eval)	# 字段statement用eval函数转为分词列表				
-		dataset_dataframe['option_a'] = dataset_dataframe['option_a'].map(eval)		# 字段option_a用eval函数转为分词列表		
-		dataset_dataframe['option_b'] = dataset_dataframe['option_b'].map(eval)		# 字段option_b用eval函数转为分词列表		
-		dataset_dataframe['option_c'] = dataset_dataframe['option_c'].map(eval)		# 字段option_c用eval函数转为分词列表		
-		dataset_dataframe['option_d'] = dataset_dataframe['option_d'].map(eval)		# 字段option_d用eval函数转为分词列表		
+		dataset_dataframe['statement'] = dataset_dataframe['statement'].map(eval)	# 字段statement用eval函数转为分词列表
+		dataset_dataframe['option_a'] = dataset_dataframe['option_a'].map(eval)		# 字段option_a用eval函数转为分词列表
+		dataset_dataframe['option_b'] = dataset_dataframe['option_b'].map(eval)		# 字段option_b用eval函数转为分词列表
+		dataset_dataframe['option_c'] = dataset_dataframe['option_c'].map(eval)		# 字段option_c用eval函数转为分词列表
+		dataset_dataframe['option_d'] = dataset_dataframe['option_d'].map(eval)		# 字段option_d用eval函数转为分词列表
 		
-		if self.args.word_embedding is None:
+		if self.args.word_embedding is None and self.args.document_embedding is None:
 			# 使用token2id的顺序编码值进行词嵌入
 			dataset_dataframe['question'] = dataset_dataframe['statement'].map(self.token_to_id(max_length=max_statement_length, token2id=token2id))																# 题目题干的分词列表转为编号列表
-			dataset_dataframe['options'] = dataset_dataframe[['option_a', 'option_b', 'option_c', 'option_d']].apply(self.combine_option(max_length=max_option_length, token2emb=token2id, encode_as='id'), axis=1)	# 题目选项的分词列表转为编号列表并合并
+			dataset_dataframe['options'] = dataset_dataframe[['option_a', 'option_b', 'option_c', 'option_d']].apply(self.combine_option(max_length=max_option_length, token2emb=token2id, encode_as='id'), axis=1)	# 题目选项的分词列表转为编号列表并合并	
+		
 		elif self.args.word_embedding in GENSIM_EMBEDDING_MODEL_SUMMARY:
-			# 使用gensim词向量模型进行训练
+			# 使用gensim词向量模型进行训练: word2vec, fasttext
 			embedding_model_class = eval(GENSIM_EMBEDDING_MODEL_SUMMARY[self.args.word_embedding]['class'])
 			embedding_model_path = GENSIM_EMBEDDING_MODEL_SUMMARY[self.args.word_embedding]['model']
 			embedding_model = embedding_model_class.load(embedding_model_path)
 			token2vector = embedding_model.wv
 			self.vector_size = embedding_model.wv.vector_size
+			
+			# 2021/12/27 21:26:45 这里可以直接删除模型, 直接用wv即可
 			del embedding_model
 
 			dataset_dataframe['question'] = dataset_dataframe['statement'].map(self.token_to_vector(max_length=max_statement_length, token2vector=token2vector))															# 题目题干的分词列表转为编号列表
 			dataset_dataframe['options'] = dataset_dataframe[['option_a', 'option_b', 'option_c', 'option_d']].apply(self.combine_option(max_length=max_option_length, token2emb=token2vector, encode_as='vector'), axis=1)	# 题目选项的分词列表转为编号列表并合并
+		
+		elif self.args.word_embedding in BERT_MODEL_SUMMARY:
+			# 目前不考虑用BERT模型生成词向量
+			raise NotImplementedError
+		
+		elif self.args.document_embedding in GENSIM_EMBEDDING_MODEL_SUMMARY:
+			# 使用gensim文档向量模型进行训练: 目前这里特指doc2vec模型, 代码目前比较硬
+			embedding_model_class = eval(GENSIM_EMBEDDING_MODEL_SUMMARY[self.args.document_embedding]['class'])
+			embedding_model_path = GENSIM_EMBEDDING_MODEL_SUMMARY[self.args.document_embedding]['model']
+			embedding_model = embedding_model_class.load(embedding_model_path)
+			
+			# 相对来说词向量模型的调用要麻烦一些, 文档向量模型的调用要容易很多, 也不是很好和下面几个成员函数合并, 所以直接写lambda函数来解决了
+			# 2021/12/27 22:25:08 注意torch.cat与torch.stack的区别, 前者不会增加维数, 后者则支持拼接得到更高维数的张量
+			dataset_dataframe['question'] = dataset_dataframe['statement'].map(embedding_model.infer_vector)
+			dataset_dataframe['options'] = dataset_dataframe[['option_a', 'option_b', 'option_c', 'option_d']].apply(lambda _dataframe: [embedding_model.infer_vector(_dataframe[0]),
+																																		 embedding_model.infer_vector(_dataframe[1]),
+																																		 embedding_model.infer_vector(_dataframe[2]),
+																																		 embedding_model.infer_vector(_dataframe[3])], axis=1)
+		elif self.args.document_embedding in BERT_MODEL_SUMMARY:	
+			# 使用BERT模型生成文档向量: 注意只有BERT模型输出是torch.Tensor, 其他都是numpy.ndarray, 是可以比较容易处理的
+			bert_tokenizer, bert_model = TransformersEmbeddingModel.load_bert_model(model_name=self.args.document_embedding)
+			bert_config = TransformersEmbeddingModel.load_bert_config(model_name=self.args.document_embedding)
+			
+			def _generate_bert_output(_tokens):
+				# BERT模型无需分词, 直接输入整个句子即可
+				_text = [''.join(_tokens)]
+				_output = self.tem.generate_bert_output(text=_text, tokenizer=bert_tokenizer, model=bert_model, max_length=bert_config['max_position_embeddings'])
+				return _output
+				
+			dataset_dataframe['question'] = dataset_dataframe['statement'].map(_generate_bert_output)
+			dataset_dataframe['options'] = dataset_dataframe[['option_a', 'option_b', 'option_c', 'option_d']].apply(lambda _dataframe: [_generate_bert_output(_dataframe[0]),
+																																		 _generate_bert_output(_dataframe[1]),
+																																		 _generate_bert_output(_dataframe[2]),
+																																		 _generate_bert_output(_dataframe[3])], axis=1)
 		else:
 			# 目前尚未完成其他词嵌入的使用
 			raise NotImplementedError
@@ -220,7 +320,7 @@ class Dataset(Dataset):
 				dictionary_path = REFERENCE_DICTIONARY_PATH
 			dictionary = Dictionary.load(dictionary_path)
 			similarity = self.grm.build_similarity(model_name=self.args.retrieval_model_name)
-			sequence = GensimRetrieveModel.load_sequence(model_name=self.args.retrieval_model_name)
+			sequence = GensimRetrievalModel.load_sequence(model_name=self.args.retrieval_model_name)
 
 			reference_dataframe = pandas.read_csv(REFERENCE_PATH, sep='\t', header=0)
 			index2subject = {index: '法制史' if law == '目录和中国法律史' else law for index, law in enumerate(reference_dataframe['law'])}		# 记录reference_dataframe中每一行对应的法律门类
@@ -239,7 +339,7 @@ class Dataset(Dataset):
 
 			logging.info('检索参考书目文档段落...')
 			
-			if self.args.word_embedding is None:
+			if self.args.word_embedding is None and self.args.document_embedding is None:
 				dataset_dataframe['reference'] = dataset_dataframe['reference_index'].map(self.find_reference_by_index(max_length=max_reference_length, 
 																													   token2emb=token2id, 
 																													   reference_dataframe=reference_dataframe,
@@ -248,7 +348,36 @@ class Dataset(Dataset):
 				dataset_dataframe['reference'] = dataset_dataframe['reference_index'].map(self.find_reference_by_index(max_length=max_reference_length, 
 																													   token2emb=token2vector, 
 																													   reference_dataframe=reference_dataframe,
-																													   encode_as='vector'))			
+																													   encode_as='vector'))		
+			elif self.args.word_embedding in BERT_MODEL_SUMMARY:
+				# 目前不考虑用BERT模型生成词向量
+				raise NotImplementedError
+				
+			elif self.args.document_embedding in GENSIM_EMBEDDING_MODEL_SUMMARY:
+				# 2021/12/27 22:17:56 使用gensim文档向量模型进行训练: 目前这里特指doc2vec模型, 代码目前比较硬
+				# 2021/12/27 22:20:22 改自self.find_reference_by_index函数, 其实还是可以用lambda一行写完的, 可读性差了一些
+				dataset_dataframe['reference'] = dataset_dataframe['reference_index'].map(lambda _reference_index: numpy.stack([embedding_model.infer_vector(eval(reference_dataframe.loc[_index, 'content'])) for _index in _reference_index]))
+			
+			elif self.args.document_embedding in BERT_MODEL_SUMMARY:	
+				# 2021/12/27 22:42:30 使用BERT模型生成文档向量: 注意只有BERT模型输出是torch.Tensor, 其他都是numpy.ndarray, 是可以比较容易处理的
+				def _generate_bert_output(_reference_index):
+					_reference = []
+					for _index in _reference_index:
+						# 2021/12/27 22:42:38 BERT模型无需分词, 直接输入整个句子即可
+						_text = [''.join(eval(reference_dataframe.loc[_index, 'content']))]
+						_output = self.tem.generate_bert_output(text=_text, tokenizer=bert_tokenizer, model=bert_model, max_length=bert_config['max_position_embeddings'])
+						_reference.append(_output)
+					# 2021/12/27 22:42:42 不要输出为列表
+					return torch.stack(_reference)
+				
+				# 2021/12/27 22:43:15 其实上面这个函数可以一行写完的
+				# _generate_bert_output = lambda _reference_index: torch.stack([bert_model(**bert_tokenizer(''.join(eval(reference_dataframe.loc[_index, 'content'])), return_tensors='pt', padding=True)).get(self.args.tem.bert_output) for _index in _reference_index])
+					
+				dataset_dataframe['reference'] = dataset_dataframe['reference_index'].map(_generate_bert_output)
+				
+			else:
+				# 目前尚未完成其他词嵌入的使用
+				raise NotImplementedError	
 			logging.info('填充subject字段的缺失值...')
 			dataset_dataframe['subject'] = dataset_dataframe[['reference_index', 'subject']].apply(self.fill_subject(index2subject), axis=1)
 
@@ -292,15 +421,16 @@ class Dataset(Dataset):
 		
 	def token_to_vector(self, max_length, token2vector):
 		"""20211218更新: 引入词向量对分词进行编码"""
-		unk_or_pad_vector = [0] * self.vector_size
+		unk_or_pad_vector = numpy.zeros((self.vector_size, ))
 		def _token_to_vector(_tokens):
 			_vectors = list(map(lambda _token: token2vector[_token] if _token in token2vector else unk_or_pad_vector[:], _tokens))
 			if len(_vectors) >= max_length:
-				return _vectors[: max_length]
+				_vectors = _vectors[: max_length]
 			else:
-				return _vectors + [unk_or_pad_vector[:] for _ in range(max_length - len(_vectors))]	# 注意这里复制列表就别用乘号了, 老老实实用循环免得出问题
+				_vectors = _vectors + [unk_or_pad_vector[:] for _ in range(max_length - len(_vectors))]	# 注意这里复制列表就别用乘号了, 老老实实用循环免得出问题
+			return numpy.stack(_vectors)																# 2021/12/27 23:00:44 修正为stack拼接
 		return _token_to_vector
-		
+	
 	def combine_option(self, max_length, token2emb, encode_as='id'):
 		"""题目选项分词列表转编号并合并"""		
 		if encode_as == 'id':
@@ -342,6 +472,7 @@ class Dataset(Dataset):
 	def find_reference_by_index(self, max_length, token2emb, reference_dataframe, encode_as='id'):
 		"""根据新生成的reference_index寻找对应的参考段落, 并转为编号形式"""
 		if encode_as == 'id':
+			
 			def _find_reference_by_index(_reference_index):
 				_reference = []
 				__token_to_id = self.token_to_id(max_length=max_length, token2id=token2emb)	
@@ -351,8 +482,10 @@ class Dataset(Dataset):
 				if len(_reference) < self.args.num_best:						# 2021/12/19 11:18:24 竟然Similarity可能返回的结果不足num_best, 也不是很能理解, 只能手动填补了
 					for _ in range(self.args.num_best - len(_reference)):
 						_reference.append([token2emb['UNK']] * max_length)		# 2021/12/19 11:25:16 填补为UNK
-				return _reference
+				return numpy.stack(_reference)									# 2021/12/27 22:07:18 要转为数组形式
+				
 		elif encode_as == 'vector':
+			
 			def _find_reference_by_index(_reference_index):
 				_reference = []
 				__token_to_vector = self.token_to_vector(max_length=max_length, token2vector=token2emb)	
@@ -362,7 +495,7 @@ class Dataset(Dataset):
 				if len(_reference) < self.args.num_best:						# 2021/12/19 11:18:24 竟然Similarity可能返回的结果不足num_best, 也不是很能理解, 只能手动填补了
 					for _ in range(self.args.num_best - len(_reference)):
 						_reference.append(numpy.zeros((self.vector_size, )))	# 2021/12/19 11:25:26 填补为零向量
-				return _reference		
+				return numpy.stack(_reference)									# 2021/12/27 22:07:18 要转为数组形式
 		else:
 			raise NotImplementedError
 		return _find_reference_by_index

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # @author : caoyang
 # @email: caoyang@163.sufe.edu.cn
-# 默认参数配置
+# 默认参数配置: 尽量不要出现同名参数
 
 import argparse
 
@@ -24,6 +24,7 @@ class BaseConfig:
 	parser.add_argument('--max_option_length', default=128, type=int, help='题目选项分词序列最大长度')
 	
 	parser.add_argument('--word_embedding', default=None, type=str, help='使用的词嵌入, 默认值None表示只用token2id的顺序编码值, 目前可用的值包括word2vec, fasttext, bert')
+	parser.add_argument('--document_embedding', default=None, type=str, help='使用的文档嵌入, 2021/12/27 13:55:42新增, 因为我发现调用BERT模型的话是不需要分词, 直接输入句子即可, 可以视为对句子(或文档)进行的嵌入, 而且Gensim里也有doc2vec的模型')
 
 	# 模型训练的配置
 	parser.add_argument('--num_epoch', default=32, type=int, help='训练轮数')
@@ -75,10 +76,21 @@ class EmbeddingModelConfig:
 	parser = deepcopy(BaseConfig.parser)
 	parser.add_argument('--size_word2vec', default=256, type=int, help='gensim嵌入模型Word2Vec的嵌入维数, 即Word2Vec模型的size参数')
 	parser.add_argument('--min_count_word2vec', default=5, type=int, help='Word2Vec模型的min_count参数')
+	parser.add_argument('--window_word2vec', default=5, type=int, help='Word2Vec模型的window参数')
+	parser.add_argument('--workers_word2vec', default=3, type=int, help='Word2Vec模型的workers参数')
 
 	parser.add_argument('--size_fasttext', default=256, type=int, help='gensim嵌入模型FastText的嵌入维数, 即FastText模型的size参数')
 	parser.add_argument('--min_count_fasttext', default=5, type=int, help='FastText模型的min_count参数')
-
+	parser.add_argument('--window_fasttext', default=5, type=int, help='FastText模型的window参数')
+	parser.add_argument('--workers_fasttext', default=3, type=int, help='FastText模型的workers参数')
+	
+	parser.add_argument('--size_doc2vec', default=512, type=int, help='gensim嵌入模型Doc2Vec的嵌入维数, 即FastText模型的vector_size参数(size参数即将被弃用)')
+	parser.add_argument('--min_count_doc2vec', default=5, type=int, help='Doc2Vec模型的min_count参数')
+	parser.add_argument('--window_doc2vec', default=5, type=int, help='Doc2Vec模型的window参数')
+	parser.add_argument('--workers_doc2vec', default=3, type=int, help='Doc2Vec模型的workers参数')
+	
+	
+	parser.add_argument('--bert_output', default='pooler_output', type=str, help='BERT模型使用的输出, 默认pooler_output即池化后的输出结果, 也可以使用last_hidden_output, 会比pooler多一个维度')
 
 class QAModelConfig:
 	"""问答模型相关配置"""
@@ -93,4 +105,4 @@ if __name__ == '__main__':
 	config = BaseConfig()
 	parser = config.parser
 	args = parser.parse_args()
-
+	print('num_best' in args)

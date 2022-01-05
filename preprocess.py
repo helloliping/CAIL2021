@@ -10,7 +10,7 @@ import gensim
 from setting import *
 from config import RetrievalModelConfig, EmbeddingModelConfig
 from src.data_tools import json_to_csv, split_validset, token2frequency_to_csv, token2id_to_csv, reference_to_csv, load_stopwords, filter_stopwords
-from src.retrieval_model import GensimRetrieveModel
+from src.retrieval_model import GensimRetrievalModel
 from src.embedding_model import GensimEmbeddingModel
 from src.utils import load_args, save_args, timer
 
@@ -64,7 +64,7 @@ def build_gensim_retrieval_models(args=None, model_names=None, update_reference_
 	if model_names is None:
 		model_names = list(GENSIM_RETRIEVAL_MODEL_SUMMARY.keys())
 			
-	grm = GensimRetrieveModel(args=args)
+	grm = GensimRetrievalModel(args=args)
 	
 	if update_reference_corpus:
 		grm.build_reference_corpus(reference_path=REFERENCE_PATH, 
@@ -122,8 +122,18 @@ def build_gensim_embedding_models(args=None, model_names=None):
 		args = load_args(Config=EmbeddingModelConfig)
 		args.size_word2vec = 256
 		args.min_count_word2vec = 1
+		args.window_word2vec = 5
+		args.workers_word2vec = 16
+		
 		args.size_fasttext = 256			 
-		args.min_count_fasttext = 1		
+		args.min_count_fasttext = 1	
+		args.window_fasttext = 5
+		args.workers_fasttext = 16	
+		
+		args.size_doc2vec = 512			 
+		args.min_count_doc2vec = 1	
+		args.window_doc2vec = 5
+		args.workers_doc2vec = 16	
 		
 	if model_names is None:
 		model_names = list(GENSIM_EMBEDDING_MODEL_SUMMARY.keys())
@@ -131,9 +141,17 @@ def build_gensim_embedding_models(args=None, model_names=None):
 	gem = GensimEmbeddingModel(args=args)
 	
 	if 'word2vec' in model_names:
-		gem.build_word2vec_model(corpus_import_path=REFERENCE_CORPUS_PATH, model_export_path=REFERENCE_WORD2VEC_MODEL_PATH)
+		gem.build_word2vec_model(corpus_import_path=REFERENCE_CORPUS_PATH, 
+								 document_import_path=REFERENCE_DOCUMENT_PATH,
+								 model_export_path=REFERENCE_WORD2VEC_MODEL_PATH)
 	if 'fasttext' in model_names:
-		gem.build_fasttext_model(corpus_import_path=REFERENCE_CORPUS_PATH, model_export_path=REFERENCE_FASTTEXT_MODEL_PATH)
+		gem.build_fasttext_model(corpus_import_path=REFERENCE_CORPUS_PATH, 
+								 document_import_path=REFERENCE_DOCUMENT_PATH,
+								 model_export_path=REFERENCE_FASTTEXT_MODEL_PATH)
+	if 'doc2vec' in model_names:
+		gem.build_doc2vec_model(corpus_import_path=REFERENCE_CORPUS_PATH, 
+								document_import_path=REFERENCE_DOCUMENT_PATH,
+								model_export_path=REFERENCE_DOC2VEC_MODEL_PATH)
 	
 	save_args(args=args, save_path=os.path.join(TEMP_DIR, 'EmbeddingModelConfig.json'))
 	
@@ -142,4 +160,5 @@ if __name__ == '__main__':
 	# preprocess_trainsets_and_testsets()
 	# preprocess_reference_book()
 	# build_gensim_retrieval_models(model_names=['tfidf', 'lsi', 'lda', 'hdp'], update_reference_corpus=True)
-	build_gensim_embedding_models(model_names=['word2vec', 'fasttext'])
+	# build_gensim_embedding_models(model_names=['word2vec', 'fasttext'])
+	build_gensim_embedding_models(model_names=['word2vec', 'fasttext', 'doc2vec'])

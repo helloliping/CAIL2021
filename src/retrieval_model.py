@@ -23,7 +23,7 @@ from setting import *
 from src.data_tools import load_stopwords, filter_stopwords
 from src.utils import timer
 
-class GensimRetrieveModel:
+class GensimRetrievalModel:
 	"""gensim模块下的文档检索模型"""
 	def __init__(self, args, **kwargs):
 		"""
@@ -84,7 +84,7 @@ class GensimRetrieveModel:
 			'pivot'		: self.args.pivot_tfidf,
 			'slope'		: self.args.slope_tfidf,
 		}
-		return GensimRetrieveModel.easy_build_model(model_name='tfidf',
+		return GensimRetrievalModel.easy_build_model(model_name='tfidf',
 													corpus_import_path=corpus_import_path,
 													model_export_path=model_export_path,
 													corpus_export_path=corpus_export_path,
@@ -107,7 +107,7 @@ class GensimRetrieveModel:
 			'extra_samples'	: self.args.extra_samples_lsi,				# 除秩k外还可使用的样本数量, 可以提升精确性
 			'dtype'			: numpy.float64,
 		}
-		return GensimRetrieveModel.easy_build_model(model_name='lsi',
+		return GensimRetrievalModel.easy_build_model(model_name='lsi',
 													corpus_import_path=corpus_import_path,
 													model_export_path=model_export_path,
 													corpus_export_path=corpus_export_path,
@@ -140,7 +140,7 @@ class GensimRetrieveModel:
 			'callbacks'				: None,								# 评估指标
 			'dtype'					: numpy.float32
 		}
-		return GensimRetrieveModel.easy_build_model(model_name='lda',
+		return GensimRetrievalModel.easy_build_model(model_name='lda',
 													corpus_import_path=corpus_import_path,
 													model_export_path=model_export_path,
 													corpus_export_path=corpus_export_path,
@@ -168,7 +168,7 @@ class GensimRetrieveModel:
 			'outputdir'		: None,
 			'random_state'	: None,
 		}
-		return GensimRetrieveModel.easy_build_model(model_name='hdp',
+		return GensimRetrievalModel.easy_build_model(model_name='hdp',
 													corpus_import_path=corpus_import_path,
 													model_export_path=model_export_path,
 													corpus_export_path=corpus_export_path,
@@ -183,7 +183,7 @@ class GensimRetrieveModel:
 		kwargs = {
 			'normalize': True,
 		}
-		return GensimRetrieveModel.easy_build_model(model_name='logentropy',
+		return GensimRetrievalModel.easy_build_model(model_name='logentropy',
 													corpus_import_path=corpus_import_path,
 													model_export_path=model_export_path,
 													corpus_export_path=corpus_export_path,
@@ -214,7 +214,7 @@ class GensimRetrieveModel:
 		:param dictionary_import_path	: gensim字典导入路径
 		:param model_export_path		: 模型保存路径
 		"""
-		GensimRetrieveModel.validate_corpus_import_path(corpus_import_path=corpus_import_path, model_name=model_name)
+		GensimRetrievalModel.validate_corpus_import_path(corpus_import_path=corpus_import_path, model_name=model_name)
 		corpus = MmCorpus(corpus_import_path)
 		
 		# 20211212更新: 意外发现LogEntropy模型的构造参数里没有id2word, 因此将setting.py中GENSIM_MODEL_SUMMARY里对应的dictionary字段修正为None

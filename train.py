@@ -32,6 +32,7 @@ from src.utils import initialize_logger, terminate_logger, load_args, save_args
 def train_choice_model(mode, model_name, **kwargs):
 	assert mode in ['train', 'train_kd', 'train_ca']
 	logger = initialize_logger(filename=os.path.join(LOGGING_DIR, f'{time.strftime("%Y%m%d")}_{model_name}_{mode}'), filemode='w')
+	logger.info(f'args: {kwargs}')
 	
 	# 配置模型
 	args_1 = load_args(Config=QAModelConfig)							# 问答模型配置
@@ -40,12 +41,13 @@ def train_choice_model(mode, model_name, **kwargs):
 		args_1.__setattr__(key, value)
 	model = eval(model_name)(args=args_1).to(DEVICE)					# 构建模型
 	
+	
 	# 配置训练集
 	args_2 = load_args(Config=DatasetConfig)
 	# 根据kwargs调整问答模型配置的参数
 	for key, value in kwargs.items():
 		args_2.__setattr__(key, value)																																
-	train_dataloader = generate_dataloader(args=args_2, mode=mode, do_export=False, pipeline='choice')	
+	train_dataloader = generate_dataloader(args=args_2, mode=mode, do_export=False, pipeline='choice', for_test=False)	
 
 	# 提取训练参数值
 	num_epoch = args_1.num_epoch																				
@@ -55,7 +57,7 @@ def train_choice_model(mode, model_name, **kwargs):
 
 	# 配置验证集: do_valid为True时生效
 	if args_2.do_valid:
-		valid_dataloader = generate_dataloader(args=args_2, mode=mode.replace('train', 'valid'), do_export=False, pipeline='choice')	
+		valid_dataloader = generate_dataloader(args=args_2, mode=mode.replace('train', 'valid'), do_export=False, pipeline='choice', for_test=False)	
 		valid_logging = {
 			'epoch'			: [],
 			'accuracy'		: [],
@@ -135,13 +137,22 @@ def train_choice_model(mode, model_name, **kwargs):
 			logging.info(f'valid | epoch: {epoch} - accuracy: {mean_accuracy} - score: {mean_strict_score, mean_loose_score}')
 			
 		# 保存模型
-		save_checkpoint(model=model, save_path=os.path.join(CHECKPOINT_DIR, f'{model_name}_{mode}_{epoch}.h5'), optimizer=optimizer)
+		save_checkpoint(model=model, save_path=os.path.join(CHECKPOINT_DIR, f'{model_name}_{mode}_{epoch}.h5'), optimizer=optimizer, scheduler=scheduler)
+	
+		# 2021/12/20 22:20:40 每个epoch结束都记录一下结果
+		train_logging_dataframe = pandas.DataFrame(train_logging, columns=list(train_logging.keys()))
+		train_logging_dataframe.to_csv(os.path.join(TEMP_DIR, f'{model_name}_{mode}.csv'), header=True, index=False, sep='\t')
+		if args_1.do_valid:
+			valid_logging_dataframe = pandas.DataFrame(valid_logging, columns=list(valid_logging.keys()))
+			valid_logging_dataframe.to_csv(os.path.join(TEMP_DIR, f'{model_name}_{mode.replace("train", "valid")}.csv'), header=True, index=False, sep='\t')
 	
 	terminate_logger(logger=logger)
 	
-	train_logging_dataframe = pandas.DataFrame(train_logging, columns=list(train_logging.keys())).to_csv(os.path.join(TEMP_DIR, f'{model_name}_{mode}.csv'), header=True, index=False, sep='\t')
+	train_logging_dataframe = pandas.DataFrame(train_logging, columns=list(train_logging.keys()))
+	train_logging_dataframe.to_csv(os.path.join(TEMP_DIR, f'{model_name}_{mode}.csv'), header=True, index=False, sep='\t')
 	if args_1.do_valid:
-		valid_logging_dataframe = pandas.DataFrame(valid_logging, columns=list(valid_logging.keys())).to_csv(os.path.join(TEMP_DIR, f'{model_name}_{mode.replace("train", "valid")}.csv'), header=True, index=False, sep='\t')
+		valid_logging_dataframe = pandas.DataFrame(valid_logging, columns=list(valid_logging.keys()))
+		valid_logging_dataframe.to_csv(os.path.join(TEMP_DIR, f'{model_name}_{mode.replace("train", "valid")}.csv'), header=True, index=False, sep='\t')
 		return train_logging_dataframe, valid_logging_dataframe
 	return train_logging_dataframe
 
@@ -150,6 +161,7 @@ def train_choice_model(mode, model_name, **kwargs):
 def train_judgment_model(mode, model_name, **kwargs):
 	assert mode in ['train', 'train_kd', 'train_ca']
 	logger = initialize_logger(filename=os.path.join(LOGGING_DIR, f'{time.strftime("%Y%m%d")}_{model_name}_{mode}'), filemode='w')
+	logger.info(f'args: {kwargs}')
 	
 	# 配置模型
 	args_1 = load_args(Config=QAModelConfig)							# 问答模型配置
@@ -163,7 +175,7 @@ def train_judgment_model(mode, model_name, **kwargs):
 	# 根据kwargs调整问答模型配置的参数
 	for key, value in kwargs.items():
 		args_2.__setattr__(key, value)																																
-	train_dataloader = generate_dataloader(args=args_2, mode=mode, do_export=False, pipeline='judgment')	
+	train_dataloader = generate_dataloader(args=args_2, mode=mode, do_export=False, pipeline='judgment', for_test=False)	
 	
 	# 提取训练参数值
 	num_epoch = args_1.num_epoch																				
@@ -175,7 +187,7 @@ def train_judgment_model(mode, model_name, **kwargs):
 
 	# 配置验证集: do_valid为True时生效
 	if args_2.do_valid:
-		valid_dataloader = generate_dataloader(args=args_2, mode=mode.replace('train', 'valid'), do_export=False, pipeline='judgment')	
+		valid_dataloader = generate_dataloader(args=args_2, mode=mode.replace('train', 'valid'), do_export=False, pipeline='judgment', for_test=False)	
 		valid_logging = {
 			'epoch'	: [],
 			'auc'	: [],
@@ -197,6 +209,11 @@ def train_judgment_model(mode, model_name, **kwargs):
 	}
 	for threshold in test_thresholds:
 		train_logging[f'accuracy{threshold}'] = []
+	
+	
+	# for iteration, data in enumerate(train_dataloader):
+		# print(data['reference'].shape)
+	
 	
 	for epoch in range(num_epoch):
 		model.train()
@@ -270,37 +287,49 @@ def train_judgment_model(mode, model_name, **kwargs):
 							  export_path=os.path.join(IMAGE_DIR, f'pr_{model_name}_{mode}_{epoch}.png'))
 		
 		# 保存模型
-		save_checkpoint(model=model, save_path=os.path.join(CHECKPOINT_DIR, f'{model_name}_{mode}_{epoch}.h5'), optimizer=optimizer)
+		save_checkpoint(model=model, save_path=os.path.join(CHECKPOINT_DIR, f'{model_name}_{mode}_{epoch}.h5'), optimizer=optimizer, scheduler=scheduler)
+		
+		# 2021/12/20 22:20:40 每个epoch结束都记录一下结果
+		train_logging_dataframe = pandas.DataFrame(train_logging, columns=list(train_logging.keys()))
+		train_logging_dataframe.to_csv(os.path.join(TEMP_DIR, f'{model_name}_{mode}.csv'), header=True, index=False, sep='\t')
+		if args_1.do_valid:
+			valid_logging_dataframe = pandas.DataFrame(valid_logging, columns=list(valid_logging.keys()))
+			valid_logging_dataframe.to_csv(os.path.join(TEMP_DIR, f'{model_name}_{mode.replace("train", "valid")}.csv'), header=True, index=False, sep='\t')
 	
-	terminate_logger(logger=logger)
+	terminate_logger(logger=logger)	# 终止日志
 	
-	train_logging_dataframe = pandas.DataFrame(train_logging, columns=list(train_logging.keys())).to_csv(os.path.join(TEMP_DIR, f'{model_name}_{mode}.csv'), header=True, index=False, sep='\t')
+	train_logging_dataframe = pandas.DataFrame(train_logging, columns=list(train_logging.keys()))
+	train_logging_dataframe.to_csv(os.path.join(TEMP_DIR, f'{model_name}_{mode}.csv'), header=True, index=False, sep='\t')
 	if args_1.do_valid:
-		valid_logging_dataframe = pandas.DataFrame(valid_logging, columns=list(valid_logging.keys())).to_csv(os.path.join(TEMP_DIR, f'{model_name}_{mode.replace("train", "valid")}.csv'), header=True, index=False, sep='\t')
+		valid_logging_dataframe = pandas.DataFrame(valid_logging, columns=list(valid_logging.keys()))
+		valid_logging_dataframe.to_csv(os.path.join(TEMP_DIR, f'{model_name}_{mode.replace("train", "valid")}.csv'), header=True, index=False, sep='\t')
 		return train_logging_dataframe, valid_logging_dataframe
+		
 	return train_logging_dataframe
 
 
 # 选择题模型训练脚本
 def run_choice():
 	# kwargs = {
-		# 'num_epoch': 1, 
-		# 'do_valid': True, 
-		# 'train_batch_size': 32, 
-		# 'valid_batch_size': 32, 
-		# 'use_reference': False,
-		# 'word_embedding': None,
+		# 'num_epoch'			: 32, 
+		# 'train_batch_size'	: 32, 
+		# 'valid_batch_size'	: 32, 
+		# 'use_reference'		: False,
+		# 'word_embedding'	: None,
+		# 'document_embedding': None,
+		# 'num_best'			: 32,
 	# }
 	# train_choice_model(mode='train_kd', model_name='BaseChoiceModel', **kwargs)
 	# train_choice_model(mode='train_ca', model_name='BaseChoiceModel', **kwargs)
+	
 	kwargs = {
 		'num_epoch'			: 32, 
-		'do_valid'			: True, 
 		'train_batch_size'	: 32, 
 		'valid_batch_size'	: 32, 
 		'use_reference'		: True,
 		'word_embedding'	: None,
-		'num_best'			: 16,
+		'document_embedding': None,
+		'num_best'			: 32,
 	}
 	train_choice_model(mode='train_kd', model_name='ReferenceChoiceModel', **kwargs)
 	train_choice_model(mode='train_ca', model_name='ReferenceChoiceModel', **kwargs)
@@ -308,12 +337,13 @@ def run_choice():
 # 判断题模型训练脚本
 def run_judgment():
 	# kwargs = {
-		# 'num_epoch': 32, 
-		# 'do_valid': True, 
-		# 'train_batch_size': 128, 
-		# 'valid_batch_size': 128, 
-		# 'use_reference': False,
-		# 'word_embedding': None,
+		# 'num_epoch'			: 32, 
+		# 'train_batch_size'	: 128, 
+		# 'valid_batch_size'	: 128, 
+		# 'use_reference'		: False,
+		# 'word_embedding'		: None,
+		# 'document_embedding'	: None,
+		# 'num_best'			: 32,
 	# }
 	
 	# train_judgment_model(mode='train_kd', model_name='BaseJudgmentModel', **kwargs)
@@ -321,16 +351,16 @@ def run_judgment():
 	
 	kwargs = {
 		'num_epoch'			: 32, 
-		'do_valid'			: True, 
-		'train_batch_size'	: 8, 
-		'valid_batch_size'	: 8, 
-		'use_reference'		: True,		# 使用参考文献
+		'train_batch_size'	: 32, 
+		'valid_batch_size'	: 128, 
+		'use_reference'		: True,
 		'word_embedding'	: None,
-		'num_best'			: 16, 
+		'document_embedding': None,
+		'num_best'			: 32,
 	}
-	train_judgment_model(mode='train_kd', model_name='ReferenceJudgmentModel', **kwargs)
+	# train_judgment_model(mode='train_kd', model_name='ReferenceJudgmentModel', **kwargs)
 	train_judgment_model(mode='train_ca', model_name='ReferenceJudgmentModel', **kwargs)
-
+	
 
 if __name__ == '__main__':
 	# run_choice()
